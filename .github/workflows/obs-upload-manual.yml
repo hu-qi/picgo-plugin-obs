@@ -1,0 +1,43 @@
+name: OBS Upload Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_path:
+        description: OBS object prefix for smoke uploads
+        required: false
+        default: picgo-plugin-obs-ci
+      multipart_threshold:
+        description: Multipart threshold, for example 1B or 100MB
+        required: false
+        default: 100MB
+
+jobs:
+  smoke-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Upload smoke test file to OBS
+        env:
+          OBS_ACCESS_KEY_ID: ${{ secrets.OBS_ACCESS_KEY_ID }}
+          OBS_SECRET_ACCESS_KEY: ${{ secrets.OBS_SECRET_ACCESS_KEY }}
+          OBS_SERVER: ${{ secrets.OBS_SERVER }}
+          OBS_BUCKET: ${{ secrets.OBS_BUCKET }}
+          OBS_CUSTOM_DOMAIN: ${{ secrets.OBS_CUSTOM_DOMAIN }}
+          OBS_ACL: ${{ secrets.OBS_ACL }}
+          OBS_STORAGE_CLASS: ${{ secrets.OBS_STORAGE_CLASS }}
+          OBS_TEST_PATH: ${{ inputs.test_path }}
+          OBS_MULTIPART_THRESHOLD: ${{ inputs.multipart_threshold }}
+        run: npm run smoke:obs
