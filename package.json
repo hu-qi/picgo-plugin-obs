@@ -1,0 +1,59 @@
+{
+  "name": "picgo-plugin-obs",
+  "version": "0.3.0",
+  "description": "PicGo uploader plugin for Huawei Cloud OBS with CLI/GUI config, MIME detection, any-file upload, multipart upload, and GitHub Actions workflows.",
+  "main": "index.js",
+  "keywords": [
+    "picgo",
+    "picgo-plugin",
+    "picgo-uploader",
+    "picgo-plugin-uploader",
+    "obs",
+    "huawei-obs",
+    "huaweicloud-obs",
+    "huawei-cloud-obs",
+    "huaweicloud",
+    "huawei-cloud",
+    "object-storage",
+    "cloud-storage",
+    "image-upload",
+    "file-upload",
+    "multipart-upload",
+    "cli",
+    "gui"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "esdk-obs-nodejs": "^3.26.2",
+    "mime-types": "^2.1.35"
+  },
+  "peerDependencies": {
+    "picgo": ">=2.3.0"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "README.en.md",
+    "README.zh-CN.md",
+    "README.zh-TW.md"
+  ],
+  "scripts": {
+    "test": "node test/mock-upload.test.js",
+    "syntax": "node -c index.js && node -c test/mock-upload.test.js && node -c test/smoke-obs-upload.js",
+    "pack:dry-run": "npm pack --dry-run",
+    "smoke:obs": "node test/smoke-obs-upload.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hu-qi/picgo-plugin-obs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hu-qi/picgo-plugin-obs/issues"
+  },
+  "homepage": "https://github.com/hu-qi/picgo-plugin-obs#readme"
+}
