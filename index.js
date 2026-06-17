@@ -293,8 +293,22 @@ function logWarn (ctx, message) {
   else if (ctx.log && typeof ctx.log.warning === 'function') ctx.log.warning(message)
 }
 
+function logError (ctx, message) {
+  if (ctx.log && typeof ctx.log.error === 'function') ctx.log.error(message)
+  else logWarn(ctx, message)
+}
+
 function notify (ctx, title, message) {
-  if (typeof ctx.emit === 'function') ctx.emit('notification', { title, body: message, text: message })
+  if (typeof ctx.emit === 'function') {
+    ctx.emit('notification', { title, body: message, text: message, message })
+    ctx.emit('notification', title, message)
+  }
+}
+
+function createNotifiedError (message) {
+  const error = new Error(message)
+  error._obsNotified = true
+  return error
 }
 
 function isImageContentType (contentType) {
@@ -372,9 +386,17 @@ async function multipartUpload (client, ctx, options) {
 
 async function uploadItem (client, ctx, item, config) {
   const key = buildObjectKey(item, config)
+  const ext = path.extname(item.fileName || item.name || item.path || key) || '非图片'
   const contentType = mime.lookup(item.fileName || item.name || item.path || key) || 'application/octet-stream'
   const isImage = isImageContentType(contentType)
-  if (!isImage && !config.allowAnyFile) throw new Error(`当前仅允许上传图片。如需上传 ${path.extname(item.fileName || item.name || item.path || key) || '非图片'} 文件，请开启 allowAnyFile。`)
+
+  if (!isImage && !config.allowAnyFile) {
+    const title = '华为云 OBS：非图片已阻止'
+    const message = `未开启 allowAnyFile，仅允许上传图片。文件 ${ext} 已被阻止。`
+    logError(ctx, `[OBS] ${message}`)
+    notify(ctx, title, message)
+    throw createNotifiedError(message)
+  }
 
   const source = getUploadSource(item, key)
   try {
@@ -418,7 +440,9 @@ const uploader = {
       ctx.output = output
       return ctx
     } catch (err) {
-      notify(ctx, 'Huawei OBS Upload Error', err && err.message ? err.message : String(err))
+      const message = err && err.message ? err.message : String(err)
+      logError(ctx, `[OBS] upload failed: ${message}`)
+      if (!err || !err._obsNotified) notify(ctx, 'Huawei OBS Upload Error', message)
       throw err
     } finally {
       if (typeof client.close === 'function') {
