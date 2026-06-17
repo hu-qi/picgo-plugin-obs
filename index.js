@@ -1,6 +1,7 @@
 'use strict'
 
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const crypto = require('crypto')
 const mime = require('mime-types')
@@ -42,9 +43,9 @@ function safeEncodeKey (key) {
 
 function getExtFromFile (item) {
   if (item.extname) return item.extname.startsWith('.') ? item.extname : `.${item.extname}`
-  const fromFileName = path.extname(item.fileName || '')
+  const fromFileName = path.extname(item.fileName || item.name || '')
   if (fromFileName) return fromFileName
-  const fromPath = path.extname(item.path || '')
+  const fromPath = path.extname(item.path || item.filePath || item.fullPath || '')
   return fromPath || '.png'
 }
 
@@ -61,7 +62,7 @@ function buildObjectKey (item, config) {
   const datePath = trimSlash(config.datePath)
   if (basePath) parts.push(basePath)
   if (datePath) parts.push(dayjs().format(datePath))
-  const fileName = config.keepFileName === false ? randomName(item) : (item.fileName || randomName(item))
+  const fileName = config.keepFileName === false ? randomName(item) : (item.fileName || item.name || randomName(item))
   parts.push(fileName.replace(/^\/+/, ''))
   return parts.filter(Boolean).join('/')
 }
@@ -165,14 +166,14 @@ function bufferFromUnknown (value) {
   if (value instanceof Uint8Array) return Buffer.from(value)
   if (value instanceof ArrayBuffer) return Buffer.from(new Uint8Array(value))
   if (Array.isArray(value)) return Buffer.from(value)
+  if (value && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data)
   return null
 }
 
 function bufferFromBase64Like (value) {
   if (!value) return null
-  if (Buffer.isBuffer(value)) return value
-  if (value instanceof Uint8Array) return Buffer.from(value)
-  if (value instanceof ArrayBuffer) return Buffer.from(new Uint8Array(value))
+  const fromBinary = bufferFromUnknown(value)
+  if (fromBinary) return fromBinary
   if (typeof value !== 'string') return null
   return Buffer.from(stripDataUrlPrefix(value), 'base64')
 }
@@ -181,28 +182,79 @@ function isLikelyDataUrl (value) {
   return typeof value === 'string' && /^data:[^;,]+(?:;charset=[^;,]+)?;base64,/i.test(value.trim())
 }
 
-function getUploadSource (item) {
-  if (item.path && fs.existsSync(item.path)) {
-    const stat = fs.statSync(item.path)
-    return { type: 'file', SourceFile: item.path, size: stat.size }
+function getExistingFilePath (item) {
+  const candidates = [item.path, item.filePath, item.fullPath]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate && fs.existsSync(candidate)) return candidate
   }
-
-  const bodyFromBuffer = bufferFromUnknown(item.buffer)
-  if (bodyFromBuffer) return { type: 'body', Body: bodyFromBuffer, size: bodyFromBuffer.length }
-
-  const bodyFromBase64Image = bufferFromBase64Like(item.base64Image)
-  if (bodyFromBase64Image) return { type: 'body', Body: bodyFromBase64Image, size: bodyFromBase64Image.length }
-
-  if (isLikelyDataUrl(item.imgUrl)) {
-    const bodyFromImgUrl = bufferFromBase64Like(item.imgUrl)
-    if (bodyFromImgUrl) return { type: 'body', Body: bodyFromImgUrl, size: bodyFromImgUrl.length }
-  }
-
-  throw new Error(`Cannot find upload source for ${item.fileName || item.path || 'unknown file'}`)
+  return ''
 }
 
-function getUploadBody (source) {
-  return source.type === 'file' ? { SourceFile: source.SourceFile } : { Body: source.Body }
+function createTempSourceFile (item, key, buffer) {
+  const dir = path.join(os.tmpdir(), 'picgo-plugin-obs')
+  fs.mkdirSync(dir, { recursive: true })
+  const ext = path.extname(key) || getExtFromFile(item) || '.bin'
+  const filePath = path.join(dir, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`)
+  fs.writeFileSync(filePath, buffer)
+  return filePath
+}
+
+function getUploadSource (item, key) {
+  const filePath = getExistingFilePath(item)
+  if (filePath) {
+    const stat = fs.statSync(filePath)
+    return { type: 'file', SourceFile: filePath, size: stat.size, temp: false }
+  }
+
+  const buffers = [
+    bufferFromUnknown(item.buffer),
+    bufferFromBase64Like(item.base64Image),
+    isLikelyDataUrl(item.imgUrl) ? bufferFromBase64Like(item.imgUrl) : null
+  ].filter(Boolean)
+
+  if (buffers.length) {
+    const sourceFile = createTempSourceFile(item, key, buffers[0])
+    return { type: 'file', SourceFile: sourceFile, size: buffers[0].length, temp: true }
+  }
+
+  throw new Error(`Cannot find upload source for ${item.fileName || item.name || item.path || 'unknown file'}`)
+}
+
+function cleanupUploadSource (source) {
+  if (source && source.temp && source.SourceFile) {
+    try { fs.unlinkSync(source.SourceFile) } catch (_) {}
+  }
+}
+
+function startsWithBytes (buffer, bytes) {
+  if (!buffer || buffer.length < bytes.length) return false
+  for (let i = 0; i < bytes.length; i++) {
+    if (buffer[i] !== bytes[i]) return false
+  }
+  return true
+}
+
+function assertImageMagic (source, contentType, key) {
+  if (!/^image\//i.test(contentType || '')) return
+  const head = fs.readFileSync(source.SourceFile).subarray(0, 16)
+  const hex = head.toString('hex')
+
+  if (startsWithBytes(head, [0xef, 0xbf, 0xbd])) {
+    throw new Error(`${key} 图片文件头出现 EF BF BD，说明二进制已被 UTF-8 文本化，已阻止上传。请确认 PicGo 加载的是最新插件。`)
+  }
+
+  const checks = {
+    'image/png': () => startsWithBytes(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    'image/jpeg': () => startsWithBytes(head, [0xff, 0xd8, 0xff]),
+    'image/jpg': () => startsWithBytes(head, [0xff, 0xd8, 0xff]),
+    'image/gif': () => head.subarray(0, 6).toString('ascii') === 'GIF87a' || head.subarray(0, 6).toString('ascii') === 'GIF89a',
+    'image/webp': () => head.subarray(0, 4).toString('ascii') === 'RIFF' && head.subarray(8, 12).toString('ascii') === 'WEBP'
+  }
+
+  const check = checks[String(contentType).toLowerCase()]
+  if (check && !check()) {
+    throw new Error(`${key} 文件头与 ${contentType} 不匹配，head=${hex}，已阻止上传，避免覆盖 OBS 上的对象。`)
+  }
 }
 
 function checkObsResponse (result, action) {
@@ -320,32 +372,39 @@ async function multipartUpload (client, ctx, options) {
 
 async function uploadItem (client, ctx, item, config) {
   const key = buildObjectKey(item, config)
-  const contentType = mime.lookup(item.fileName || item.path || key) || 'application/octet-stream'
+  const contentType = mime.lookup(item.fileName || item.name || item.path || key) || 'application/octet-stream'
   const isImage = isImageContentType(contentType)
-  if (!isImage && !config.allowAnyFile) throw new Error(`当前仅允许上传图片。如需上传 ${path.extname(item.fileName || item.path || key) || '非图片'} 文件，请开启 allowAnyFile。`)
+  if (!isImage && !config.allowAnyFile) throw new Error(`当前仅允许上传图片。如需上传 ${path.extname(item.fileName || item.name || item.path || key) || '非图片'} 文件，请开启 allowAnyFile。`)
 
-  const source = getUploadSource(item)
-  const fileSize = source.size
-  const baseParams = buildBaseObjectParams(config, key, contentType)
-  if (fileSize > OBS_MULTIPART_MAX_SIZE) throw new Error(`文件过大：${formatSize(fileSize)}。OBS 分片上传单对象最大约 48.8TB。`)
-  if (fileSize >= config.largeFileWarningSize) {
-    const msg = `大文件上传提示：${item.fileName || item.path || key} 大小为 ${formatSize(fileSize)}，上传可能较慢。`
-    logWarn(ctx, `[OBS] ${msg}`)
-    notify(ctx, 'Huawei OBS 大文件上传', msg)
+  const source = getUploadSource(item, key)
+  try {
+    assertImageMagic(source, contentType, key)
+
+    const fileSize = source.size
+    const baseParams = buildBaseObjectParams(config, key, contentType)
+    if (fileSize > OBS_MULTIPART_MAX_SIZE) throw new Error(`文件过大：${formatSize(fileSize)}。OBS 分片上传单对象最大约 48.8TB。`)
+    if (fileSize >= config.largeFileWarningSize) {
+      const msg = `大文件上传提示：${item.fileName || item.name || item.path || key} 大小为 ${formatSize(fileSize)}，上传可能较慢。`
+      logWarn(ctx, `[OBS] ${msg}`)
+      notify(ctx, 'Huawei OBS 大文件上传', msg)
+    }
+
+    const shouldUseMultipart = config.enableMultipartUpload && (fileSize > PUT_OBJECT_MAX_SIZE || fileSize >= config.multipartThreshold)
+    logInfo(ctx, `[OBS] upload source: key=${key}, sourceFile=${source.SourceFile}, temp=${source.temp ? 'yes' : 'no'}, size=${formatSize(fileSize)}, contentType=${contentType}`)
+
+    if (fileSize > PUT_OBJECT_MAX_SIZE && !shouldUseMultipart) throw new Error(`putObject 单次上传不支持超过 5GB，当前文件 ${formatSize(fileSize)}，请开启 enableMultipartUpload。`)
+    if (shouldUseMultipart) await multipartUpload(client, ctx, { ...baseParams, SourceFile: source.SourceFile, fileSize, partSize: config.multipartPartSize, concurrency: config.multipartConcurrency })
+    else await obsRequest(client, 'putObject', { ...baseParams, SourceFile: source.SourceFile })
+
+    const url = buildUrl(key, config)
+    item.url = url
+    item.imgUrl = url
+    item.contentType = contentType
+    item.fileSize = fileSize
+    return item
+  } finally {
+    cleanupUploadSource(source)
   }
-
-  const shouldUseMultipart = source.type === 'file' && config.enableMultipartUpload && (fileSize > PUT_OBJECT_MAX_SIZE || fileSize >= config.multipartThreshold)
-  if (fileSize > PUT_OBJECT_MAX_SIZE && !shouldUseMultipart) throw new Error(`putObject 单次上传不支持超过 5GB，当前文件 ${formatSize(fileSize)}，请开启 enableMultipartUpload。`)
-
-  if (shouldUseMultipart) await multipartUpload(client, ctx, { ...baseParams, SourceFile: source.SourceFile, fileSize, partSize: config.multipartPartSize, concurrency: config.multipartConcurrency })
-  else await obsRequest(client, 'putObject', { ...baseParams, ...getUploadBody(source) })
-
-  const url = buildUrl(key, config)
-  item.url = url
-  item.imgUrl = url
-  item.contentType = contentType
-  item.fileSize = fileSize
-  return item
 }
 
 const uploader = {
