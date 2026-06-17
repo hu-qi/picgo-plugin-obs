@@ -136,7 +136,7 @@ function getConfig (ctx) {
     acl: config.acl || '',
     storageClass: config.storageClass || '',
     keepFileName: config.keepFileName !== false,
-    allowAnyFile: parseBoolean(config.allowAnyFile, false),
+    allowAnyFile: parseBoolean(config.allowAnyFile, true),
     largeFileWarningSize: parseSize(config.largeFileWarningSize, DEFAULT_LARGE_FILE_WARNING_SIZE),
     enableMultipartUpload: parseBoolean(config.enableMultipartUpload, true),
     multipartThreshold: parseSize(config.multipartThreshold, DEFAULT_MULTIPART_THRESHOLD),
@@ -465,7 +465,7 @@ const uploader = {
       { name: 'acl', type: 'list', required: false, message: '对象 ACL，可留空使用桶默认策略', choices: ['', 'public-read', 'private'], default: old.acl || '' },
       { name: 'storageClass', type: 'list', required: false, message: '存储类别，可留空使用桶默认类别', choices: ['', 'STANDARD', 'WARM', 'COLD'], default: old.storageClass || '' },
       { name: 'keepFileName', type: 'confirm', required: false, message: '保留原始文件名', default: old.keepFileName !== false },
-      { name: 'allowAnyFile', type: 'confirm', required: false, message: '允许上传非图片文件，例如 mp4、pptx、pdf、zip', default: old.allowAnyFile === true },
+      { name: 'allowAnyFile', type: 'confirm', required: false, message: '允许上传非图片文件，例如 mp4、pptx、pdf、zip', default: old.allowAnyFile !== false },
       { name: 'largeFileWarningSize', type: 'input', required: false, message: '大文件提示阈值，例如 100MB、1GB', default: formatSize(old.largeFileWarningSize || DEFAULT_LARGE_FILE_WARNING_SIZE) },
       { name: 'enableMultipartUpload', type: 'confirm', required: false, message: '启用 OBS 分片上传，超过阈值或超过 5GB 时自动使用', default: old.enableMultipartUpload !== false },
       { name: 'multipartThreshold', type: 'input', required: false, message: '分片上传阈值，例如 100MB、1GB；超过 5GB 强制分片', default: formatSize(old.multipartThreshold || DEFAULT_MULTIPART_THRESHOLD) },
@@ -492,7 +492,7 @@ const guiMenu = ctx => [
       try {
         const config = getConfig(ctx)
         validateConfig(config)
-        await guiApi.showMessageBox({ type: 'info', title: DISPLAY_NAME, message: `配置可用：bucket=${config.bucket}, endpoint=${config.server}, multipart=${config.enableMultipartUpload ? 'on' : 'off'}, threshold=${formatSize(config.multipartThreshold)}` })
+        await guiApi.showMessageBox({ type: 'info', title: DISPLAY_NAME, message: `配置可用：bucket=${config.bucket}, endpoint=${config.server}, anyFile=${config.allowAnyFile ? 'on' : 'off'}, multipart=${config.enableMultipartUpload ? 'on' : 'off'}, threshold=${formatSize(config.multipartThreshold)}` })
       } catch (err) {
         await guiApi.showMessageBox({ type: 'error', title: `${DISPLAY_NAME} 配置错误`, message: err.message || String(err) })
       }
